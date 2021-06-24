@@ -1,0 +1,20 @@
+version: "3"
+services: 
+    back-end:
+        image: baophuc27/demo-docker:be
+        container_name: backend
+        ports: 
+            - 8080:8080
+        volumes: 
+            - /tmp:/data
+
+    front-end:
+        image: baophuc27/demo-docker:fe
+        container_name: frontend
+        ports: 
+            - 3000:3000
+        depends_on: 
+            - back-end
+    
+
+        

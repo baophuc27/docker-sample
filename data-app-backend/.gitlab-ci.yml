@@ -1,0 +1,69 @@
+image: openjdk:11
+services:
+ - docker:19-dind
+
+stages:
+ - build
+ - test
+ - build and push docker image
+ - deploy
+
+before_script:
+ - export GRADLE_USER_HOME=`pwd`/.gradle
+
+cache:
+  paths:
+    - .gradle/wrapper
+    - .gradle/caches
+
+variables:
+  DOCKER_IMAGE_NAME: backend-dev
+
+build:
+  stage: build
+  script:
+    - ./gradlew assemble
+  artifacts:
+    paths:
+      - build/libs/*.jar
+
+test:
+  stage: test
+  script:
+    - ./gradlew check
+
+docker build:
+  image: docker:stable
+  stage: build and push docker image
+  variables:
+    DOCKER_HOST: tcp://docker:2375/
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+   - source env/.${CI_COMMIT_REF_NAME}.env
+   - export IMAGE_TAG=${DOCKER_REPO}/${DOCKER_IMAGE_NAME}:${CI_COMMIT_REF_NAME##*/}-${CI_COMMIT_SHORT_SHA}
+   - echo "Building docker image for $IMAGE_TAG"
+  script:
+   - docker build -t $IMAGE_TAG .
+   - docker login -u $DOCKER_USER -p $DOCKER_PASSWORD docker.io
+   - docker push $IMAGE_TAG
+  only:
+    - /^deployment-.*/
+
+deploy:
+  image: ubuntu:latest
+  stage: deploy
+  before_script:
+   - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
+   - eval $(ssh-agent -s)
+   - source env/.${CI_COMMIT_REF_NAME}.env
+   - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+   - mkdir -p ~/.ssh
+   - chmod 700 ~/.ssh
+   - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+   - export IMAGE_TAG=${DOCKER_REPO}/${DOCKER_IMAGE_NAME}:${CI_COMMIT_REF_NAME##*/}-${CI_COMMIT_SHORT_SHA}
+   - echo "Deploying docker image $IMAGE_TAG to $CI_COMMIT_REF_NAME"
+  script:
+    - ssh deploy@$SERVER_IP -p $SSH_PORT "docker login -u $DOCKER_USER -p $DOCKER_PASSWORD docker.io; docker stop $APP_NAME; docker system prune -a -f; docker pull $IMAGE_TAG; docker container run -d --name $APP_NAME -p $PORT:8080 $IMAGE_TAG; docker logout"
+  only:
+    - /^deployment-.*/
